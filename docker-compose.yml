@@ -1,0 +1,89 @@
+# GitLab CE for a home LAN and a tailnet. See README.md.
+#
+# No password appears in this file or in .env: the initial password of the root
+# account is a file under ./secrets (made by scripts/init-secrets.sh) and
+# reaches the container as a compose secret.
+#
+# TLS ends at the reverse proxy (lan-proxy, Caddy). Inside, GitLab speaks plain
+# HTTP on a loopback port; git over ssh is served by the container's own sshd
+# on a spare host port, because 22 belongs to the host.
+
+name: gitlab
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:${GITLAB_VERSION:?set GITLAB_VERSION in .env}
+    restart: unless-stopped
+    hostname: ${GITLAB_HOSTNAME:?set GITLAB_HOSTNAME in .env}
+    # GitLab asks for a bigger /dev/shm than Docker's default of 64 MB.
+    shm_size: 256m
+    # The memory budget. memswap_limit equal to mem_limit means no swap on top.
+    mem_limit: ${GITLAB_MEM_LIMIT:-16g}
+    memswap_limit: ${GITLAB_MEM_LIMIT:-16g}
+    ports:
+      - "127.0.0.1:${GITLAB_HTTP_PORT:-8929}:80"
+      - "${GITLAB_SSH_PORT:-2222}:22"
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://${GITLAB_HOSTNAME}'
+
+        # TLS is the proxy's job. GitLab's own nginx listens on plain HTTP and
+        # trusts X-Forwarded-For from the container network's gateway (the
+        # address the proxy shows up as, because the port is forwarded).
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        nginx['real_ip_trusted_addresses'] = ['172.16.0.0/12']
+        nginx['real_ip_header'] = 'X-Forwarded-For'
+        nginx['real_ip_recursive'] = 'on'
+        letsencrypt['enable'] = false
+
+        # Clone URLs carry the ssh port.
+        gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_SSH_PORT:-2222}
+        gitlab_rails['time_zone'] = '${TZ:-Europe/Berlin}'
+
+        # Read once, when the database is created.
+        gitlab_rails['initial_root_password'] = File.read('/run/secrets/root_password').gsub("\n", "")
+
+        # The Rails metrics endpoint (/-/metrics) answers only to these
+        # sources. The proxy refuses the path anyway (caddy/gitlab.caddy.example).
+        gitlab_rails['monitoring_whitelist'] = ['127.0.0.0/8', '::1/128', '172.16.0.0/12']
+
+        # Memory. Omnibus sizes several parts from the memory of the whole
+        # host, not from the container limit, so the large ones are set here.
+        # About 6 to 8 GB in steady state for one user and a few projects.
+        puma['worker_processes'] = 3
+        puma['per_worker_max_memory_mb'] = 1200
+        sidekiq['concurrency'] = 10
+        postgresql['shared_buffers'] = '1GB'
+
+        # Parts a private forge for one person does not use. The bundled
+        # Prometheus, Alertmanager and exporters are off (the host's own
+        # Prometheus scrapes /-/metrics later); the Kubernetes agent server is off.
+        prometheus_monitoring['enable'] = false
+        gitlab_kas['enable'] = false
+    secrets:
+      - root_password
+    volumes:
+      - ./config:/etc/gitlab
+      - ./logs:/var/log/gitlab
+      - ./data:/var/opt/gitlab
+    healthcheck:
+      # The image's own gitlab-healthcheck passes while the web part is still
+      # down (it skips the HTTP check until the first reconfigure has written its
+      # settings), so ask the readiness endpoint itself.
+      test: ["CMD-SHELL", "/opt/gitlab/embedded/bin/curl -fsS -o /dev/null --max-time 10 http://127.0.0.1/-/readiness || exit 1"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      # The first start runs the whole reconfigure and the database setup.
+      start_period: 10m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+secrets:
+  root_password:
+    file: ./secrets/root_password

@@ -1,0 +1,14 @@
+[Unit]
+Description=GitLab backup to the NAS
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gitlab-backup
+# A hung ssh connection is cut by the ServerAlive settings in the script, not
+# by this.
+TimeoutStartSec=6h
+Nice=10
+IOSchedulingClass=idle

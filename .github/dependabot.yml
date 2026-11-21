@@ -1,0 +1,23 @@
+# Dependabot keeps two kinds of pins current, each after a 7-day cooldown so a
+# release that is pulled in its first week never reaches a pull request: the
+# commit-SHA pin of actions/checkout, and the zizmor version with its wheel
+# hashes. The GitLab image tag is not here on purpose: GitLab has required
+# upgrade stops, so the tag moves by hand (README.md, "Upgrade").
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+  - package-ecosystem: pip
+    directory: "/scripts/ci/zizmor"
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7

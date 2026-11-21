@@ -1,0 +1,80 @@
+name: check
+
+# Static checks only: this workflow holds no credentials and starts no GitLab.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scripts-and-compose:
+    name: Scripts, compose, units, proxy snippet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: shellcheck (preinstalled on the runner image)
+        run: |
+          shellcheck -s bash backup/gitlab-backup.sh scripts/*.sh
+          shellcheck -s sh scripts/init-secrets.sh
+
+      - name: compose file parses with a fresh .env and fresh secrets
+        run: |
+          cp .env.example .env
+          sh scripts/init-secrets.sh
+          docker compose config -q
+
+      - name: no secret and no local address in tracked files
+        run: |
+          ! git ls-files | grep -E '(^|/)(\.env|secrets/|api_token|root_password|gitlab-secrets\.json)$' | grep -v '\.example$'
+          ! git grep -nE '(^|[^0-9])(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)([^0-9]|$)' -- . ':!.github'
+
+      - name: systemd units verify
+        run: |
+          sudo install -m 755 backup/gitlab-backup.sh /usr/local/sbin/gitlab-backup
+          systemd-analyze verify backup/gitlab-backup.service backup/gitlab-backup.timer
+
+      - name: proxy snippet validates against Caddy
+        run: |
+          printf '{\n\tauto_https off\n}\n:8080 {\n\timport /etc/caddy/gitlab.caddy\n\thandle {\n\t\trespond "No." 404\n\t}\n}\n' > "$RUNNER_TEMP/Caddyfile"
+          docker run --rm -e LAN_DOMAIN=lan.example.org \
+            -v "$RUNNER_TEMP/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -v "$PWD/caddy/gitlab.caddy.example:/etc/caddy/gitlab.caddy:ro" \
+            caddy:2.11.9 caddy validate --config /etc/caddy/Caddyfile
+
+  zizmor:
+    name: Workflow security (zizmor)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install zizmor (version and wheel hashes pinned in scripts/ci/zizmor/requirements.txt)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zizmor"
+          "$RUNNER_TEMP/zizmor/bin/pip" install --require-hashes --no-deps --only-binary :all: -r scripts/ci/zizmor/requirements.txt
+
+      - name: zizmor .github
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/zizmor/bin/zizmor" --format github .github'

@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly GitLab backup
+
+[Timer]
+# 02:30 local time, after the Nextcloud backup of the same home (01:15) is
+# normally done, so the two do not compete for the NAS.
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=5min
+# Run once at boot if the machine was off at 02:30.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
