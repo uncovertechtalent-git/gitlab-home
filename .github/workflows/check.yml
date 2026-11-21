@@ -41,8 +41,14 @@ jobs:
 
       - name: no secret and no local address in tracked files
         run: |
-          ! git ls-files | grep -E '(^|/)(\.env|secrets/|api_token|root_password|gitlab-secrets\.json)$' | grep -v '\.example$'
-          ! git grep -nE '(^|[^0-9])(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)([^0-9]|$)' -- . ':!.github'
+          if git ls-files | grep -E '(^|/)(\.env|secrets/|api_token|root_password|gitlab-secrets\.json)$'; then
+            echo "a secret or local state file is tracked" >&2
+            exit 1
+          fi
+          if git grep -nE '(^|[^0-9])(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)([^0-9]|$)' -- . ':!.github'; then
+            echo "a private address is in a tracked file" >&2
+            exit 1
+          fi
 
       - name: systemd units verify
         run: |

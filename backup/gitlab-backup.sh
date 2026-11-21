@@ -77,7 +77,7 @@ upload() {
 log "start $STAMP"
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q gitlab)")" = healthy ] ||
   { log "the gitlab container is not healthy, not backing up"; exit 1; }
-nas "$SUDO install -d -m 700 '$NAS_DIR/backups' '$NAS_DIR/config'"
+nas "$SUDO install -d -m 700 '$NAS_DIR' '$NAS_DIR/backups' '$NAS_DIR/config'"
 
 log "gitlab-backup create"
 compose exec -T gitlab gitlab-backup create STRATEGY=copy CRON=1 BACKUP="$STAMP" </dev/null

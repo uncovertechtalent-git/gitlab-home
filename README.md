@@ -13,12 +13,14 @@ scripts/
   create-api-token.sh   a short-lived root token for the scripts below, written to a file, never printed
   revoke-api-token.sh   revokes it and deletes the file
   import-bare-repos.sh  bare repositories in a folder become private projects of one group
+  add-deploy-key.sh     a public ssh key becomes a write deploy key on every project of a group
 caddy/
   gitlab.caddy.example  the site snippet for the reverse proxy (lan-proxy in nextcloud-home)
 backup/
   gitlab-backup.sh      the nightly job (runs as root)
   gitlab-backup.service systemd unit for the job
   gitlab-backup.timer   02:30 every night
+  restore-project.sh    one project's repository out of a backup tar, without a running GitLab
   backup.env.example    where the NAS is, which key, how long to keep
 ```
 
@@ -75,7 +77,15 @@ For each repository the script creates `<group>/<name>`, private, and pushes eve
 
 ### Push access for a machine
 
-A write-enabled **deploy key** per machine is enough for a laptop that only pushes: the key is added to the projects (Settings, Repository, Deploy keys), belongs to no person, and is removed with one click when the machine is lost. A personal ssh key on your own account works the same way and reaches everything you can reach.
+A write-enabled **deploy key** per machine is enough for a laptop that only pushes: the key belongs to no person and is removed with one click when the machine is lost.
+
+```sh
+sh scripts/create-api-token.sh 1
+sh scripts/add-deploy-key.sh house /path/to/key.pub "laptop push key"
+sh scripts/revoke-api-token.sh
+```
+
+A personal ssh key on your own account works the same way and reaches everything you can reach.
 
 ## Upgrade
 
@@ -176,7 +186,18 @@ stamp=$(nas "$SUDO cat $NAS_DIR/LAST_OK")       # or any stamp from backups/
    docker compose exec gitlab gitlab-rake gitlab:check SANITIZE=true
    ```
 
-To get one project back without a full restore, take its repository out of the backup tar: it is a git bundle under `repositories/@hashed/<xx>/<yy>/<sha256 of the project id>.bundle` (and `.wiki.bundle`), and `git clone <file>.bundle` unpacks it. The project id comes from the project's page, or from the `projects` table of `db/database.sql.gz` in the same tar.
+To get one project back without a full restore, take its repository out of the backup tar with `backup/restore-project.sh`. GitLab stores each repository as a git bundle named after the SHA-256 of the project id; the script reads the id from the database dump in the same tar, extracts the bundle and clones it:
+
+```sh
+nas "$SUDO cat $NAS_DIR/backups/${stamp}_gitlab_backup.tar" > "${stamp}_gitlab_backup.tar"
+sh backup/restore-project.sh "${stamp}_gitlab_backup.tar" house/opskit ./opskit
+```
+
+On 2026-11-21 the first backup was pulled back from the NAS and two projects were rebuilt this way (the vault, about 270 MB, in 5 seconds); `HEAD` of each equalled the `HEAD` that had been pushed, and `git fsck` was clean. The full restore (steps 1 to 3 above) has not been run end to end yet: restoring the database, the uploads and the instance settings needs a second GitLab of the same version, and it is the next drill to do.
+
+## Repository settings
+
+`.github/rulesets/main.json` is the ruleset of the `main` branch, the same shape as in `site-infra`: no deletion, no force push, one approving review from the code owner, a fresh approval after the last push, resolved review threads, and the two checks of `.github/workflows/check.yml` must pass. Apply it once with `gh api -X POST repos/<owner>/gitlab-home/rulesets --input .github/rulesets/main.json`.
 
 ## Not done
 
