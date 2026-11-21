@@ -1,0 +1,6 @@
+# Local state and secrets never go into the repo.
+.env
+secrets/
+config/
+data/
+logs/
