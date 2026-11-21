@@ -26,6 +26,8 @@ class Helpers(unittest.TestCase):
         self.assertEqual(gm.project_path("squid_docker"), "squid_docker")
         self.assertEqual(gm.project_path("weird.git"), "weird-git")
         self.assertEqual(gm.project_path("a b"), "a-b")
+        self.assertEqual(gm.project_path(".github"), "dot-github")
+        self.assertEqual(gm.project_path("-x"), "dash-x")
 
     def test_credentials(self):
         with tempfile.TemporaryDirectory() as d:

@@ -63,6 +63,7 @@ for t in json.load(sys.stdin):
     if t["name"] == "github-mirror" and t["active"]:
         print(t["id"])' | while read -r tid; do api DELETE "/groups/$gid/access_tokens/$tid" >/dev/null; echo "revoked token $tid"; done
 fi
+# GNU date: this script runs on the (Linux) GitLab machine
 expires="$(date -d '+360 days' +%F)"
 tmp="$(mktemp secrets/.ghm.XXXXXX)"
 trap 'rm -f "$tmp"' EXIT

@@ -31,6 +31,7 @@ import urllib.parse
 import urllib.request
 
 API = "https://api.github.com"
+GITHUB_HEADERS = {"X-GitHub-Api-Version": "2022-11-28"}
 
 
 def load_env(path):
@@ -57,6 +58,8 @@ def next_link(header):
 def project_path(name):
     """GitLab project path for a GitHub repository name (same name; GitLab refuses a trailing .git or .atom)."""
     path = re.sub(r"[^A-Za-z0-9_.-]", "-", name)
+    if path[:1] in (".", "-"):                       # GitLab paths start with a letter, digit or underscore (".github")
+        path = ("dot-" if path[0] == "." else "dash-") + path.lstrip(".-")
     for bad in (".git", ".atom"):
         if path.endswith(bad):
             path = path[: -len(bad)] + "-" + bad[1:]
@@ -66,12 +69,13 @@ def project_path(name):
 class Http:
     """Small JSON client; one instance per base URL and token."""
 
-    def __init__(self, token=None, header="Authorization", scheme="Bearer"):
+    def __init__(self, token=None, header="Authorization", scheme="Bearer", extra=None):
         self.token, self.header, self.scheme = token, header, scheme
+        self.extra = extra or {}
         self.last_headers = {}
 
     def request(self, method, url, data=None, ok404=False):
-        headers = {"Accept": "application/json", "User-Agent": "github-mirror"}
+        headers = {"Accept": "application/json", "User-Agent": "github-mirror", **self.extra}
         if self.token:
             headers[self.header] = f"{self.scheme} {self.token}" if self.scheme else self.token
         body = None
@@ -86,6 +90,7 @@ class Http:
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as e:
             if e.code == 410 or (ok404 and e.code == 404):    # 410: the feature (issues) is switched off for that repository
+                self.last_headers = {}
                 return None
             raise RuntimeError(f"{method} {url.split('?')[0]} -> HTTP {e.code}") from None
 
@@ -142,7 +147,7 @@ class Mirror:
 
     # ---- GitHub --------------------------------------------------------------
     def list_repos(self, owner, token):
-        gh = Http(token)
+        gh = Http(token, extra=GITHUB_HEADERS)
         info = gh.request("GET", f"{API}/users/{owner}")
         if info["type"] == "Organization":
             url = f"{API}/orgs/{owner}/repos?type=all&per_page=100"
@@ -226,7 +231,7 @@ class Mirror:
 
     # ---- metadata ------------------------------------------------------------
     def export_metadata(self, owner, repo, token, meta_root):
-        gh = Http(token)
+        gh = Http(token, extra=GITHUB_HEADERS)
         base = f"{API}/repos/{owner}/{repo['name']}"
         out = meta_root / owner / repo["name"]
         out.mkdir(parents=True, exist_ok=True)
@@ -268,11 +273,13 @@ class Mirror:
         if not (self.meta_dir / ".git").exists():
             self.meta_dir.mkdir(parents=True, exist_ok=True)
             run_git(["init", "--quiet", "-b", "main"], cwd=self.meta_dir)
-            try:
-                run_git(["fetch", "--quiet", proj_url, "main"], auth, cwd=self.meta_dir)
-                run_git(["reset", "--quiet", "--hard", "FETCH_HEAD"], cwd=self.meta_dir)
-            except RuntimeError:
-                pass   # an empty project: the first commit creates main
+        try:
+            # Every run starts from what GitLab holds, so the push below is a fast-forward
+            # even after someone else touched the project.
+            run_git(["fetch", "--quiet", proj_url, "main"], auth, cwd=self.meta_dir)
+            run_git(["reset", "--quiet", "--hard", "FETCH_HEAD"], cwd=self.meta_dir)
+        except RuntimeError:
+            pass   # an empty project: the first commit creates main
 
     # ---- run -----------------------------------------------------------------
     def run(self):
