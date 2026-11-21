@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily GitHub mirror
+
+[Timer]
+# 03:30 local time: after the GitLab backup (02:30), so the next night's backup
+# holds what this run brought in.
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
