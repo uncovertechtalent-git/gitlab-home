@@ -10,7 +10,7 @@ umask 077
 
 days="${1:-7}"
 case "$days" in '' | *[!0-9]*) echo "days must be a number" >&2; exit 64 ;; esac
-[ "$days" -ge 1 ] && [ "$days" -le 30 ] || { echo "days must be 1 to 30" >&2; exit 64; }
+if [ "$days" -lt 1 ] || [ "$days" -gt 30 ]; then echo "days must be 1 to 30" >&2; exit 64; fi
 
 mkdir -p secrets
 chmod 700 secrets

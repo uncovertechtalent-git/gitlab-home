@@ -12,14 +12,12 @@ umask 077
 mkdir -p secrets
 chmod 700 secrets
 
-for name in root_password; do
-  file="secrets/$name"
-  if [ -e "$file" ]; then
-    echo "kept    $file"
-    continue
-  fi
+file=secrets/root_password
+if [ -e "$file" ]; then
+  echo "kept    $file"
+else
   # Letters and digits only: no quoting problems in any config file.
   LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 >"$file"
   chmod 600 "$file"
   echo "created $file"
-done
+fi

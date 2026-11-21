@@ -34,7 +34,7 @@ KNOWN_HOSTS="${KNOWN_HOSTS:-/root/.ssh/known_hosts}"
 # Command put in front of the privileged commands on the NAS. Default sudo; set
 # NAS_SUDO= (empty) when NAS_TARGET is a user that owns NAS_DIR and needs none.
 SUDO="${NAS_SUDO-sudo}"
-[ "$KEEP" -ge 1 ] && [ "$KEEP_LOCAL" -ge 1 ] || { echo "KEEP and KEEP_LOCAL must be at least 1" >&2; exit 64; }
+if [ "$KEEP" -lt 1 ] || [ "$KEEP_LOCAL" -lt 1 ]; then echo "KEEP and KEEP_LOCAL must be at least 1" >&2; exit 64; fi
 
 STAMP="$(date +%Y-%m-%d_%H%M%S)"
 STAMP_RE='[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}'
