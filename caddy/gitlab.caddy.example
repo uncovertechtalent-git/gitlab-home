@@ -1,0 +1,20 @@
+# GitLab on the same machine: the web interface on a loopback port, plain HTTP
+# behind Caddy. Copy to lan-proxy/sites/gitlab.caddy. Git over ssh does not
+# pass through here: it uses the ssh port of the container, directly.
+@gitlab host gitlab.{$LAN_DOMAIN}
+handle @gitlab {
+	# GitLab sends its own Strict-Transport-Security header; adding a second one
+	# here would give browsers two.
+	# Operational endpoints stay on the machine: the metrics and the health
+	# probes are for the local scraper and the container's own healthcheck.
+	@internal path /-/metrics* /-/readiness* /-/liveness*
+	respond @internal "Not served here." 403
+
+	reverse_proxy 127.0.0.1:8929 {
+		# Push and clone stream; do not buffer them.
+		flush_interval -1
+		transport http {
+			response_header_timeout 15m
+		}
+	}
+}
