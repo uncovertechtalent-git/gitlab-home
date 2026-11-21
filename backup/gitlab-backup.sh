@@ -28,6 +28,8 @@ CONF="${GITLAB_BACKUP_ENV:-/etc/gitlab-home/backup.env}"
 . "$CONF"
 
 : "${STACK_DIR:?}" "${NAS_TARGET:?}" "${NAS_DIR:?}" "${SSH_KEY:?}"
+# NAS_DIR goes into single-quoted words of remote commands; a quote in it would end them.
+case "$NAS_DIR" in *\'*) echo "NAS_DIR must not contain a single quote" >&2; exit 64 ;; esac
 KEEP="${KEEP:-28}"                  # newest backups and config archives to keep on the NAS
 KEEP_LOCAL="${KEEP_LOCAL:-2}"       # newest backup tars to keep on this machine
 KNOWN_HOSTS="${KNOWN_HOSTS:-/root/.ssh/known_hosts}"
@@ -88,9 +90,9 @@ grep -q '^db/database.sql.gz$' "$WORK/listing" || { log "the backup tar holds no
 
 log "config archive"
 # The ssh host keys sit in config/: a restored server keeps its identity, so
-# clients' known_hosts entries stay valid.
-tar --numeric-owner -C "$STACK_DIR" -cf "$WORK/config.tar" --exclude='secrets/root_password' \
-  config .env docker-compose.yml
+# clients' known_hosts entries stay valid. secrets/ is left out on purpose: the
+# root password file only seeds an empty database.
+tar --numeric-owner -C "$STACK_DIR" -cf "$WORK/config.tar" config .env docker-compose.yml
 
 log "upload"
 upload "$WORK/config.tar" "$NAS_DIR/config/config-$STAMP.tar"

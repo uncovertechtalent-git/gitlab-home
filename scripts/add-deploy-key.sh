@@ -24,6 +24,7 @@ api() { # <method> <path> [curl args]
 }
 field() { python3 -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
 
+# One page of 100 projects; a group with more needs paging here.
 ids="$(api GET "/groups/$group/projects?per_page=100" | python3 -c 'import json, sys; print(*[p["id"] for p in json.load(sys.stdin)])')"
 key_id=""
 for id in $ids; do
