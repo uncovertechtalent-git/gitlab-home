@@ -26,14 +26,18 @@ field() { python3 -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])
 
 # One page of 100 projects; a group with more needs paging here.
 ids="$(api GET "/groups/$group/projects?per_page=100" | python3 -c 'import json, sys; print(*[p["id"] for p in json.load(sys.stdin)])')"
-key_id=""
+# The key may already exist in another project (a deploy key's fingerprint is unique
+# on the instance): look it up by title first and enable it where it is missing.
+key_id="$(api GET "/deploy_keys?per_page=100" | python3 -c '
+import json, sys
+k = [x["id"] for x in json.load(sys.stdin) if x["title"] == sys.argv[1]]
+print(k[0] if k else "")' "$title")"
 for id in $ids; do
   existing="$(api GET "/projects/$id/deploy_keys" | python3 -c '
 import json, sys
 k = [x["id"] for x in json.load(sys.stdin) if x["title"] == sys.argv[1]]
 print(k[0] if k else "")' "$title")"
   if [ -n "$existing" ]; then
-    key_id="$existing"
     echo "project $id has the key already"
     continue
   fi
