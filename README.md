@@ -174,17 +174,21 @@ stamp=$(nas "$SUDO cat $NAS_DIR/LAST_OK")       # or any stamp from backups/
    nas "$SUDO cat $NAS_DIR/backups/${stamp}_gitlab_backup.tar" > "data/backups/${stamp}_gitlab_backup.tar"
    ```
 
-3. **Start, stop the writers, restore.**
+3. **Start, stop the writers, restore.** Start GitLab on the restored configuration with an empty database, wait until it is healthy, stop Puma and Sidekiq, restore, restart:
 
    ```sh
-   docker compose up -d && sleep 300       # wait until it is healthy: docker compose ps
-   docker compose exec gitlab chown git:git "/var/opt/gitlab/backups/${stamp}_gitlab_backup.tar"
-   docker compose exec gitlab gitlab-ctl stop puma
-   docker compose exec gitlab gitlab-ctl stop sidekiq
-   docker compose exec gitlab gitlab-backup restore BACKUP="$stamp" GITLAB_ASSUME_YES=1
+   docker compose up -d
+   until [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q gitlab)")" = healthy ]; do sleep 15; done
+   docker compose exec -T gitlab chown git:git "/var/opt/gitlab/backups/${stamp}_gitlab_backup.tar"
+   docker compose exec -T gitlab gitlab-ctl stop puma
+   docker compose exec -T gitlab gitlab-ctl stop sidekiq
+   docker compose exec -T gitlab gitlab-backup restore BACKUP="$stamp" GITLAB_ASSUME_YES=1 </dev/null
    docker compose restart gitlab
-   docker compose exec gitlab gitlab-rake gitlab:check SANITIZE=true
+   until [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q gitlab)")" = healthy ]; do sleep 15; done
+   docker compose exec -T gitlab gitlab-rake gitlab:check SANITIZE=true
    ```
+
+   On 2026-11-21 these commands ran as written into a second instance (another compose project name, other host ports, the same image) from the NAS copy of the first backup. The restore took about two minutes, the instance was healthy again after the restart, and the restored database held the ten projects, the settings (sign-up off, private by default, metrics on) and the deploy key; clones of three projects from it had the `HEAD` they had when the backup ran; `gitlab:check` listed no problem. GitLab prints a warning that `gitlab.rb` and `gitlab-secrets.json` are not in the backup tar: that is why step 1 restores them from the config archive first.
 
 To get one project back without a full restore, take its repository out of the backup tar with `backup/restore-project.sh`. GitLab stores each repository as a git bundle named after the SHA-256 of the project id; the script reads the id from the database dump in the same tar, extracts the bundle and clones it:
 
@@ -193,7 +197,7 @@ nas "$SUDO cat $NAS_DIR/backups/${stamp}_gitlab_backup.tar" > "${stamp}_gitlab_b
 sh backup/restore-project.sh "${stamp}_gitlab_backup.tar" house/opskit ./opskit
 ```
 
-On 2026-11-21 the first backup was pulled back from the NAS and two projects were rebuilt this way (the vault, about 270 MB, in 5 seconds); `HEAD` of each equalled the `HEAD` that had been pushed, and `git fsck` was clean. The full restore (steps 1 to 3 above) has not been run end to end yet: restoring the database, the uploads and the instance settings needs a second GitLab of the same version, and it is the next drill to do.
+On 2026-11-21 the first backup was pulled back from the NAS and two projects were rebuilt this way (the vault, about 270 MB, in 5 seconds); `HEAD` of each equalled the `HEAD` that had been pushed, and `git fsck` was clean.
 
 ## Repository settings
 
