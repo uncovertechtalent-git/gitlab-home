@@ -31,7 +31,11 @@ jobs:
       - name: shellcheck (preinstalled on the runner image)
         run: |
           shellcheck -s bash backup/gitlab-backup.sh scripts/*.sh
+          (cd github-app && shellcheck -s bash -x github-app-mint test_github_app_mint.sh)
           shellcheck -s sh scripts/init-secrets.sh
+
+      - name: github-app-mint tests (local fake of the GitHub API, no network, no real key)
+        run: bash github-app/test_github_app_mint.sh
 
       - name: compose file parses with a fresh .env and fresh secrets
         run: |

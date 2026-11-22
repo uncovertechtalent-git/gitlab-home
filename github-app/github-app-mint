@@ -119,7 +119,9 @@ main() {
     echo "ok $app/$owner -> $file (repos $repos; $perms; expires $expires)"
   done <"$conf/targets.conf"
 
-  [[ -n ${GITHUB_APP_MINT_TEXTFILE:-} ]] && write_metrics "$GITHUB_APP_MINT_TEXTFILE" "${results[@]}"
+  if [[ -n ${GITHUB_APP_MINT_TEXTFILE:-} ]]; then
+    write_metrics "$GITHUB_APP_MINT_TEXTFILE" "${results[@]}" || echo "metrics: $GITHUB_APP_MINT_TEXTFILE not written" >&2
+  fi
   return $failed
 }
 
@@ -131,29 +133,42 @@ service_of() { basename "$(dirname "$(dirname "$1")")"; }
 # write_metrics <textfile> <result>...: Prometheus text format, written atomically, mode 644 so
 # node_exporter can read it. Never fails the run: a metrics problem is reported and ignored.
 write_metrics() {
-  local out=$1 tmp r app owner file ok mtime
+  local out=$1 tmp
   shift
-  tmp=$(mktemp "$(dirname "$out")/.github-app-mint.prom.XXXXXX") || { echo "metrics: cannot write next to $out" >&2; return 0; }
-  {
-    echo "# HELP github_app_mint_target_ok 1 if the last run minted this target's token, 0 if it failed."
-    echo "# TYPE github_app_mint_target_ok gauge"
-    for r in "$@"; do
-      read -r app owner file ok <<<"$r"
-      printf 'github_app_mint_target_ok{app="%s",owner="%s",service="%s"} %s\n' "$app" "$owner" "$(service_of "$file")" "$ok"
-    done
-    echo "# HELP github_app_token_file_mtime_seconds Last change of the token file (stat; the file is not read)."
-    echo "# TYPE github_app_token_file_mtime_seconds gauge"
-    for r in "$@"; do
-      read -r app owner file ok <<<"$r"
-      mtime=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null) || continue
-      printf 'github_app_token_file_mtime_seconds{app="%s",owner="%s",service="%s"} %s\n' "$app" "$owner" "$(service_of "$file")" "$mtime"
-    done
-    echo "# HELP github_app_mint_last_run_timestamp_seconds End of the last run."
-    echo "# TYPE github_app_mint_last_run_timestamp_seconds gauge"
-    echo "github_app_mint_last_run_timestamp_seconds $(date +%s)"
-  } >"$tmp"
-  chmod 644 "$tmp"
-  mv -f "$tmp" "$out"
+  tmp=$(mktemp "$(dirname "$out")/.github-app-mint.prom.XXXXXX" 2>/dev/null) || return 1
+  # Every step is checked here, so a full disk or a read-only folder cannot stop the run under set -e,
+  # and no temporary file is left behind.
+  if metrics_text "$@" >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$out"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+metrics_text() {
+  local r app owner file ok mtime
+  echo "# HELP github_app_mint_target_ok 1 if the last run minted this target's token, 0 if it failed."
+  echo "# TYPE github_app_mint_target_ok gauge"
+  for r in "$@"; do
+    read -r app owner file ok <<<"$r"
+    printf 'github_app_mint_target_ok{%s} %s\n' "$(labels "$app" "$owner" "$file")" "$ok"
+  done
+  echo "# HELP github_app_token_file_mtime_seconds Last change of the token file (stat; the file is not read)."
+  echo "# TYPE github_app_token_file_mtime_seconds gauge"
+  for r in "$@"; do
+    read -r app owner file ok <<<"$r"
+    mtime=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null) || continue
+    printf 'github_app_token_file_mtime_seconds{%s} %s\n' "$(labels "$app" "$owner" "$file")" "$mtime"
+  done
+  echo "# HELP github_app_mint_last_run_timestamp_seconds End of the last run."
+  echo "# TYPE github_app_mint_last_run_timestamp_seconds gauge"
+  echo "github_app_mint_last_run_timestamp_seconds $(date +%s)"
+}
+
+# labels <app> <owner> <file>: app, owner, the reading service, and the file's base name (no folder),
+# which keeps two targets of one app, owner and service apart.
+labels() {
+  printf 'app="%s",owner="%s",service="%s",file="%s"' "$1" "$2" "$(service_of "$3")" "$(basename "$3")"
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

@@ -89,7 +89,7 @@ left=$(find "$t/out" -name '.github-app-token.*' | wc -l); (( left == 0 )) && ok
 # 4. The textfile: one result and one file age per target, no token, no host path, readable by node_exporter.
 m="$t/textfile/github_app_mint.prom"
 [[ -s $m ]] && ok "textfile written" || no "textfile missing"
-grep -q '^github_app_mint_target_ok{app="reader",owner="uncovertechtalent",service="'"$(basename "$t")"'"} 1$' "$m" \
+grep -q '^github_app_mint_target_ok{app="reader",owner="uncovertechtalent",service="'"$(basename "$t")"'",file="utt"} 1$' "$m" \
   && ok "minted target reported ok, service from the folder two levels up" || no "target ok line: $(grep target_ok "$m" | head -1)"
 grep -q '^github_app_mint_target_ok{app="reader",owner="nobody-installed",.*} 0$' "$m" && ok "failed target reported 0" || no "failed target line"
 [[ $(grep -c '^github_app_token_file_mtime_seconds{' "$m") == 4 ]] && ok "file age for every target, failed ones too" || no "mtime lines: $(grep -c mtime_seconds "$m")"
@@ -99,6 +99,20 @@ perm=$(stat -c %a "$m" 2>/dev/null || stat -f %Lp "$m"); [[ $perm == 644 ]] && o
 if command -v promtool >/dev/null; then
   promtool check metrics <"$m" >/dev/null 2>&1 && ok "promtool accepts the textfile" || no "promtool: $(promtool check metrics <"$m" 2>&1 | head -2)"
 fi
+
+# 5. A textfile folder the run cannot write: the exit code is still the mint result, nothing is left behind.
+mkdir -p "$t/ro"; chmod 555 "$t/ro"
+GITHUB_API="http://127.0.0.1:$(cat "$t/port")" GITHUB_APP_MINT_CONF_DIR="$t/conf" CREDENTIALS_DIRECTORY="$t/cred" \
+  GITHUB_APP_MINT_TEXTFILE="$t/ro/github_app_mint.prom" bash -c 'set -euo pipefail; source "$1"; main' _ "$here/github-app-mint" \
+  >/dev/null 2>"$t/err2"; rc=$?
+if (( $(id -u) == 0 )); then
+  echo "skip unwritable textfile folder (root writes anyway)"
+else
+  (( rc == 1 )) && ok "unwritable textfile folder keeps the mint exit code under set -e" || no "exit code $rc with unwritable textfile folder"
+  grep -q "metrics: .* not written" "$t/err2" && ok "unwritable textfile folder reported" || no "no metrics message: $(cat "$t/err2")"
+  left=$(find "$t/ro" -name '.github-app-mint.prom.*' | wc -l); (( left == 0 )) && ok "no temporary textfile left" || no "temporary textfile left"
+fi
+chmod 755 "$t/ro"
 
 echo "$pass passed, $fail failed"
 (( fail == 0 ))
