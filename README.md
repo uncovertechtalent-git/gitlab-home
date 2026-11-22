@@ -199,6 +199,39 @@ sh backup/restore-project.sh "${stamp}_gitlab_backup.tar" house/opskit ./opskit
 
 On 2026-11-21 the first backup was pulled back from the NAS and two projects were rebuilt this way (the vault, about 270 MB, in 5 seconds); `HEAD` of each equalled the `HEAD` that had been pushed, and `git fsck` was clean.
 
+## GitHub App tokens
+
+The house's services on this machine read GitHub through fine-grained personal access tokens, and those expire on a calendar and must be made again by hand. `github-app/` replaces them with two GitHub Apps and a job that mints their one-hour installation tokens into the files the services already read.
+
+```
+github-app/
+  setup-app.py            creates an app from a manifest: one click on GitHub, key saved mode 600, never printed
+  github-app-mint         mints one token per target line, narrowed to repositories and permissions
+  github-app-mint.service systemd unit; keys are credentials github-app.<app>.pem from /etc/credstore
+  github-app-mint.timer   every 30 minutes (a token lives 60)
+  apps.conf.example       <app> <app-id>
+  targets.conf.example    <app> <owner> <file> <uid> <repos|-> <perm=level,...>
+  test_github_app_mint.sh tests against a local fake of the GitHub API (bash 4+, jq, openssl, python3)
+```
+
+| App | Permissions | Used by |
+|---|---|---|
+| `<owner>-house-reader` | Actions, contents, issues, pull requests: read | `deploy-exporter` (Actions runs and job logs); later the GitHub mirror |
+| `<owner>-house-issues` | issues: write | `alert-issues` (opens and updates alert issues) |
+
+Two apps, so that the write permission is installed on one repository only while the reader can see every repository. The apps are public only so that the organisation and the second user can install them; an installation elsewhere gives nobody a token, because tokens need the private key.
+
+**Set up, once.**
+
+1. On the Mac, signed in to github.com as the owner account: `python3 -I github-app/setup-app.py reader`, open the printed local address, click *Create GitHub App*. Same for `issues`. Each run writes `~/.config/github-app/<slug>.pem` (mode 600) and `<slug>.json` (id and install link, no secret).
+2. Install: `reader` on every owner it must read (all repositories), `issues` on the owner of the alert repository (that repository only).
+3. Move each key to this machine without printing it, then delete the Mac copy: `ssh <host> 'sudo install -m 600 -o root -g root /dev/stdin /etc/credstore/github-app.reader.pem' < ~/.config/github-app/<slug>.pem`.
+4. `sudo install -m 755 github-app/github-app-mint /usr/local/sbin/`, the two units to `/etc/systemd/system/`, `apps.conf` and `targets.conf` (from the examples, with the real app ids) to `/etc/github-app-mint/`; `sudo systemctl daemon-reload && sudo systemctl start github-app-mint.service`, check `journalctl -u github-app-mint -n 20 -o cat`, then `sudo systemctl enable --now github-app-mint.timer`.
+
+**Watch it.** Each target logs one line, `ok` or `fail`, with the expiry of the new token, never the token. A failed target keeps its old file, which stops working within the hour; the job exits 1 and the unit shows failed.
+
+**Lost key.** Generate a new private key on the app's settings page and repeat step 3. The old key can be deleted there.
+
 ## Repository settings
 
 `.github/rulesets/main.json` is the ruleset of the `main` branch, the same shape as in `site-infra`: no deletion, no force push, one approving review from the code owner, a fresh approval after the last push, resolved review threads, and the two checks of `.github/workflows/check.yml` must pass. Apply it once with `gh api -X POST repos/<owner>/gitlab-home/rulesets --input .github/rulesets/main.json`.
