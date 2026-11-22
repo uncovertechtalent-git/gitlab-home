@@ -114,5 +114,24 @@ else
 fi
 chmod 755 "$t/ro"
 
+# 6. A token folder the run cannot write: that target fails and shows 0, the others are still minted,
+#    the textfile is still written, nothing temporary is left.
+if (( $(id -u) != 0 )); then
+  mkdir -p "$t/locked" "$t/tf2"; chmod 555 "$t/locked"
+  sed "s#$t/out/uttgit#$t/locked/uttgit#" "$t/conf/targets.conf" >"$t/conf/targets2.conf"
+  mkdir -p "$t/conf2"; cp "$t/conf/apps.conf" "$t/conf2/"; cp "$t/conf/targets2.conf" "$t/conf2/targets.conf"
+  GITHUB_API="http://127.0.0.1:$(cat "$t/port")" GITHUB_APP_MINT_CONF_DIR="$t/conf2" CREDENTIALS_DIRECTORY="$t/cred" \
+    GITHUB_APP_MINT_TEXTFILE="$t/tf2/github_app_mint.prom" bash -c 'set -euo pipefail; source "$1"; main' _ "$here/github-app-mint" \
+    >/dev/null 2>"$t/err3"; rc=$?
+  (( rc == 1 )) && ok "unwritable token folder: exit 1, run not aborted" || no "exit code $rc with unwritable token folder"
+  grep -q 'cannot write the file' "$t/err3" && ok "unwritable token folder reported" || no "no write failure message: $(cat "$t/err3")"
+  grep -q '^github_app_mint_target_ok{app="reader",owner="uncovertechtalent-git",.*} 0$' "$t/tf2/github_app_mint.prom" 2>/dev/null \
+    && ok "unwritable target shows 0 in a fresh textfile" || no "target_ok for the unwritable target"
+  grep -q '^github_app_mint_target_ok{app="issues",owner="uncovertechtalent",.*} 1$' "$t/tf2/github_app_mint.prom" 2>/dev/null \
+    && ok "later targets still minted" || no "later target not minted"
+  left=$(find "$t/locked" -name '.github-app-token.*' | wc -l); (( left == 0 )) && ok "no temporary token file left" || no "temporary token file left"
+  chmod 755 "$t/locked"
+fi
+
 echo "$pass passed, $fail failed"
 (( fail == 0 ))

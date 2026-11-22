@@ -54,14 +54,17 @@ api() {
   curl "${args[@]}" "${GITHUB_API:-https://api.github.com}$path"
 }
 
-# write_token <file> <uid> <token-var-name>: atomic, mode 600, owned by uid.
+# write_token <file> <uid> <token-var-name>: atomic, mode 600, owned by uid. Returns 1 on any failed
+# step (a folder missing from ReadWritePaths=, a full disk) and leaves no temporary file; checked by the
+# caller, because set -e does not apply to a function called as a condition.
 write_token() {
   local file=$1 uid=$2 tmp
-  tmp=$(mktemp "$(dirname "$file")/.github-app-token.XXXXXX")
-  printf '%s\n' "${!3}" >"$tmp"
-  chmod 600 "$tmp"
-  chown "$uid" "$tmp"
-  mv -f "$tmp" "$file"
+  tmp=$(mktemp "$(dirname "$file")/.github-app-token.XXXXXX" 2>/dev/null) || return 1
+  if printf '%s\n' "${!3}" >"$tmp" && chmod 600 "$tmp" && chown "$uid" "$tmp" && mv -f "$tmp" "$file"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
 }
 
 main() {
@@ -113,7 +116,11 @@ main() {
     if [[ -z $token ]]; then
       echo "fail $app/$owner -> $file: no token in the answer" >&2; failed=1; results+=("$app $owner $file 0"); continue
     fi
-    write_token "$file" "$uid" token
+    if ! write_token "$file" "$uid" token; then
+      unset token
+      echo "fail $app/$owner -> $file: cannot write the file" >&2
+      failed=1; results+=("$app $owner $file 0"); continue
+    fi
     unset token
     results+=("$app $owner $file 1")
     echo "ok $app/$owner -> $file (repos $repos; $perms; expires $expires)"
