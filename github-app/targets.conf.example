@@ -1,0 +1,8 @@
+# <app> <owner> <file> <uid> <repos|-> <perm=level,...>
+# Each token is narrowed to the repositories and permissions its service uses.
+#
+# agent-observability deploy-exporter (runs as nobody, 65534): Actions runs, jobs, and job logs.
+reader uncovertechtalent     /home/<user>/services/agent-observability/deploy-exporter/tokens/uncovertechtalent     65534 machinebehavior.io,tychat.io actions=read,metadata=read
+reader uncovertechtalent-git /home/<user>/services/agent-observability/deploy-exporter/tokens/uncovertechtalent-git 65534 uncovertechtalent            actions=read,metadata=read
+# agent-observability alert-issues (runs as 1000): opens and updates issues in one repository.
+issues uncovertechtalent     /home/<user>/services/agent-observability/alert-issues/secrets/github_token          1000  machinebehavior.io           issues=write,metadata=read

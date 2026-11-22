@@ -1,0 +1,10 @@
+[Unit]
+Description=Mint GitHub App tokens every 30 minutes (each lives one hour)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=30min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

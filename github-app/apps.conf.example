@@ -1,0 +1,3 @@
+# <app> <app-id>   (ids from ~/.config/github-app/<slug>.json after setup-app.py; not secret)
+reader 0000000
+issues 0000000
