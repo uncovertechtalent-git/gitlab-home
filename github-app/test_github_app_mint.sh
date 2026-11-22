@@ -3,7 +3,7 @@
 # shellcheck disable=SC2015
 # Tests for github-app-mint against a local fake of the GitHub API. Needs bash 4+, jq, openssl,
 # python3. No network, no real key: a throwaway RSA key is made in a temporary folder.
-#   bash test_github_app_tokens.sh
+#   bash test_github_app_mint.sh
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=github-app-mint
