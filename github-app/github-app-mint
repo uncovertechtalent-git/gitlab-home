@@ -15,10 +15,6 @@
 # Output files are written atomically (temporary file in the same folder, then rename), mode 600,
 # owned by <uid>. A target that fails keeps its old file; the job exits 1 if any target failed.
 # Tokens and keys never reach stdout, stderr, or a command line.
-#
-# Metrics: with GITHUB_APP_MINT_TEXTFILE set (a path in node_exporter's textfile folder), each run
-# ends by writing, per target, whether it was minted and the age of its file (mtime, read with stat;
-# the file is never opened). A file older than a token's life means every later run failed too.
 set -euo pipefail
 
 VERSION_HEADER="X-GitHub-Api-Version: 2022-11-28"
@@ -54,23 +50,19 @@ api() {
   curl "${args[@]}" "${GITHUB_API:-https://api.github.com}$path"
 }
 
-# write_token <file> <uid> <token-var-name>: atomic, mode 600, owned by uid. Returns 1 on any failed
-# step (a folder missing from ReadWritePaths=, a full disk) and leaves no temporary file; checked by the
-# caller, because set -e does not apply to a function called as a condition.
+# write_token <file> <uid> <token-var-name>: atomic, mode 600, owned by uid.
 write_token() {
   local file=$1 uid=$2 tmp
-  tmp=$(mktemp "$(dirname "$file")/.github-app-token.XXXXXX" 2>/dev/null) || return 1
-  if printf '%s\n' "${!3}" >"$tmp" && chmod 600 "$tmp" && chown "$uid" "$tmp" && mv -f "$tmp" "$file"; then
-    return 0
-  fi
-  rm -f "$tmp"
-  return 1
+  tmp=$(mktemp "$(dirname "$file")/.github-app-token.XXXXXX")
+  printf '%s\n' "${!3}" >"$tmp"
+  chmod 600 "$tmp"
+  chown "$uid" "$tmp"
+  mv -f "$tmp" "$file"
 }
 
 main() {
   local cred=${CREDENTIALS_DIRECTORY:?no CREDENTIALS_DIRECTORY: run as the systemd unit}
   local conf=${GITHUB_APP_MINT_CONF_DIR:-/etc/github-app-mint} f failed=0 work
-  local -a results=()  # "<app> <owner> <file> <1|0>" per target, for the textfile
   for f in apps.conf targets.conf; do
     [[ -r $conf/$f ]] || { echo "missing $conf/$f" >&2; return 2; }
   done
@@ -88,7 +80,7 @@ main() {
     [[ -z ${app:-} || $app == \#* ]] && continue
     local key="$cred/github-app.$app.pem" hdr="$work/$app.hdr"
     if [[ -z ${app_id[$app]:-} || ! -r $key ]]; then
-      echo "skip $app/$owner -> $file: no app id or no key github-app.$app.pem" >&2; failed=1; results+=("$app $owner $file 0"); continue
+      echo "skip $app/$owner -> $file: no app id or no key github-app.$app.pem" >&2; failed=1; continue
     fi
     if [[ ! -s $hdr ]]; then  # one JSON Web Token per app per run
       printf 'Authorization: Bearer %s\n' "$(jwt "${app_id[$app]}" "$key")" >"$hdr"
@@ -96,86 +88,32 @@ main() {
     fi
     if [[ -z ${inst_json[$app]:-} ]]; then
       if ! inst_json[$app]=$(api GET "/app/installations?per_page=100" "$hdr"); then
-        echo "fail $app: list installations" >&2; failed=1; results+=("$app $owner $file 0"); continue
+        echo "fail $app: list installations" >&2; failed=1; continue
       fi
     fi
     local inst
     inst=$(jq -r --arg o "$owner" '.[] | select((.account.login | ascii_downcase) == ($o | ascii_downcase)) | .id' \
              <<<"${inst_json[$app]}" | head -n1)
     if [[ -z $inst ]]; then
-      echo "fail $app/$owner -> $file: app not installed on $owner" >&2; failed=1; results+=("$app $owner $file 0"); continue
+      echo "fail $app/$owner -> $file: app not installed on $owner" >&2; failed=1; continue
     fi
     local resp token expires
     if ! resp=$(api POST "/app/installations/$inst/access_tokens" "$hdr" "$(body "$repos" "$perms")"); then
       echo "fail $app/$owner -> $file: $(jq -r '.message? // "request failed"' <<<"$resp" 2>/dev/null)" >&2
-      failed=1; results+=("$app $owner $file 0"); continue
+      failed=1; continue
     fi
     token=$(jq -r '.token // empty' <<<"$resp")
     expires=$(jq -r '.expires_at // "?"' <<<"$resp")
     unset resp
     if [[ -z $token ]]; then
-      echo "fail $app/$owner -> $file: no token in the answer" >&2; failed=1; results+=("$app $owner $file 0"); continue
+      echo "fail $app/$owner -> $file: no token in the answer" >&2; failed=1; continue
     fi
-    if ! write_token "$file" "$uid" token; then
-      unset token
-      echo "fail $app/$owner -> $file: cannot write the file" >&2
-      failed=1; results+=("$app $owner $file 0"); continue
-    fi
+    write_token "$file" "$uid" token
     unset token
-    results+=("$app $owner $file 1")
     echo "ok $app/$owner -> $file (repos $repos; $perms; expires $expires)"
   done <"$conf/targets.conf"
 
-  if [[ -n ${GITHUB_APP_MINT_TEXTFILE:-} ]]; then
-    write_metrics "$GITHUB_APP_MINT_TEXTFILE" "${results[@]}" || echo "metrics: $GITHUB_APP_MINT_TEXTFILE not written" >&2
-  fi
   return $failed
-}
-
-# service_of <file>: the folder two levels above the token file, the service that reads it
-# (.../deploy-exporter/tokens/<owner> -> deploy-exporter, .../alert-issues/secrets/github_token -> alert-issues).
-# A label without the host's paths.
-service_of() { basename "$(dirname "$(dirname "$1")")"; }
-
-# write_metrics <textfile> <result>...: Prometheus text format, written atomically, mode 644 so
-# node_exporter can read it. Never fails the run: a metrics problem is reported and ignored.
-write_metrics() {
-  local out=$1 tmp
-  shift
-  tmp=$(mktemp "$(dirname "$out")/.github-app-mint.prom.XXXXXX" 2>/dev/null) || return 1
-  # Every step is checked here, so a full disk or a read-only folder cannot stop the run under set -e,
-  # and no temporary file is left behind.
-  if metrics_text "$@" >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$out"; then
-    return 0
-  fi
-  rm -f "$tmp"
-  return 1
-}
-
-metrics_text() {
-  local r app owner file ok mtime
-  echo "# HELP github_app_mint_target_ok 1 if the last run minted this target's token, 0 if it failed."
-  echo "# TYPE github_app_mint_target_ok gauge"
-  for r in "$@"; do
-    read -r app owner file ok <<<"$r"
-    printf 'github_app_mint_target_ok{%s} %s\n' "$(labels "$app" "$owner" "$file")" "$ok"
-  done
-  echo "# HELP github_app_token_file_mtime_seconds Last change of the token file (stat; the file is not read)."
-  echo "# TYPE github_app_token_file_mtime_seconds gauge"
-  for r in "$@"; do
-    read -r app owner file ok <<<"$r"
-    mtime=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null) || continue
-    printf 'github_app_token_file_mtime_seconds{%s} %s\n' "$(labels "$app" "$owner" "$file")" "$mtime"
-  done
-  echo "# HELP github_app_mint_last_run_timestamp_seconds End of the last run."
-  echo "# TYPE github_app_mint_last_run_timestamp_seconds gauge"
-  echo "github_app_mint_last_run_timestamp_seconds $(date +%s)"
-}
-
-# labels <app> <owner> <file>: app, owner, the reading service, and the file's base name (no folder),
-# which keeps two targets of one app, owner and service apart.
-labels() {
-  printf 'app="%s",owner="%s",service="%s",file="%s"' "$1" "$2" "$(service_of "$3")" "$(basename "$3")"
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
