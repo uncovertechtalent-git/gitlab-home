@@ -1,0 +1,26 @@
+[Unit]
+Description=Mirror GitHub repositories into GitLab
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/github-mirror
+Environment=GITHUB_MIRROR_ENV=/etc/github-mirror/mirror.env
+# Tokens are systemd credentials: files /etc/credstore/github-mirror.* (root, mode 600)
+# appear for this service only, under $CREDENTIALS_DIRECTORY.
+ImportCredential=github-mirror.*
+# No account of its own: a transient user with a private state folder.
+DynamicUser=yes
+StateDirectory=github-mirror
+Environment=HOME=/var/lib/github-mirror
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+TimeoutStartSec=3h
+Nice=10
+IOSchedulingClass=idle

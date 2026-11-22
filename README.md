@@ -14,6 +14,12 @@ scripts/
   revoke-api-token.sh   revokes it and deletes the file
   import-bare-repos.sh  bare repositories in a folder become private projects of one group
   add-deploy-key.sh     a public ssh key becomes a write deploy key on every project of a group
+mirror/
+  github-mirror.py      mirrors GitHub repositories into GitLab and exports issues, pull requests and releases
+  github-mirror.service, github-mirror.timer   the daily job (03:30)
+  mirror.env.example    owners and group; no secrets
+  setup-gitlab.sh       the GitLab group, subgroups, metadata project and the job's group token
+  test_github_mirror.py unit tests of the helpers
 caddy/
   gitlab.caddy.example  the site snippet for the reverse proxy (lan-proxy in nextcloud-home)
 backup/
@@ -37,6 +43,7 @@ backup/
 | Visibility | new projects and groups private; public visibility not allowed | A private forge has no public projects. |
 | Secrets | files under `./secrets` (directory 700, files 600), passed in as a compose secret | No password in the compose file, in `.env`, in the repo, or on a command line. |
 | Data | bind mounts `./config`, `./data`, `./logs` next to the compose file | Easy to find and to back up. |
+| Web IDE | single-origin fallback off, extension marketplace off | With the fallback on, GitLab serves VS Code's assets from its own origin when the extension host domain (a public CDN of GitLab's) is unreachable; GitLab's admin banner calls that a high-severity risk. The cost: the Web IDE needs that domain reachable from the browser. |
 | Metrics | the Rails endpoint `/-/metrics` on, bundled Prometheus off | The proxy refuses the path; a scraper on the same machine reads the loopback port. |
 
 ## Install
@@ -199,6 +206,52 @@ sh backup/restore-project.sh "${stamp}_gitlab_backup.tar" house/opskit ./opskit
 
 On 2026-11-21 the first backup was pulled back from the NAS and two projects were rebuilt this way (the vault, about 270 MB, in 5 seconds); `HEAD` of each equalled the `HEAD` that had been pushed, and `git fsck` was clean.
 
+## GitHub mirror
+
+GitLab CE has no pull mirroring (that is a paid feature), so `mirror/github-mirror.py` does it once a day. If GitHub is down, degraded or gone, the code, the history and the audit trail are in GitLab already.
+
+For every repository of the listed GitHub owners (users and organisations) the job:
+
+1. keeps a bare mirror on disk (`git clone --mirror`, then `remote update --prune`; all branches and tags, forks and archived repositories included);
+2. pushes branches and tags to a private GitLab project `<group>/<owner>/<repo>` (forced, with `--prune`, so the copy follows rewrites and deletions of branches; the project's default branch follows GitHub's);
+3. with a GitHub token for the owner, exports issues, pull requests, issue comments, review comments, reviews and releases as JSON into the GitLab project `<group>/metadata` (`<owner>/<repo>/*.json`), one commit per run that changed anything.
+
+Everything ends up in GitLab, so the nightly GitLab backup covers it. The run is a systemd service with a transient user, tokens as systemd credentials, and a timer at 03:30, after the backup. A repository deleted on GitHub stays in GitLab. `/var/lib/github-mirror/status.json` holds the result of the last run per repository and `LAST_OK` the time of the last run without a failure.
+
+### Install
+
+On the GitLab machine, as a user with sudo, after the stack is running:
+
+```sh
+sh scripts/create-api-token.sh 1
+bash mirror/setup-gitlab.sh your-org your-user          # group, subgroups, metadata project, group token
+sudo install -m 600 secrets/github_mirror_gitlab_token /etc/credstore/github-mirror.gitlab_token && rm secrets/github_mirror_gitlab_token
+sh scripts/revoke-api-token.sh
+sudo install -d -m 755 /etc/github-mirror
+sudo install -m 644 mirror/mirror.env.example /etc/github-mirror/mirror.env      # then edit OWNERS
+sudo install -m 755 mirror/github-mirror.py /usr/local/sbin/github-mirror
+sudo install -m 644 mirror/github-mirror.service mirror/github-mirror.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start github-mirror.service && sudo journalctl -u github-mirror.service -n 40 -o cat
+sudo systemctl enable --now github-mirror.timer
+```
+
+Without any GitHub token the job mirrors the public repositories of each owner and exports no metadata. For private repositories and for the metadata, give each owner a **read-only fine-grained token**: GitHub, Settings, Developer settings, Fine-grained personal access tokens; resource owner the user or organisation; all repositories; repository permissions Contents, Issues and Pull requests set to read-only (Metadata is read-only by itself); the longest expiry you will keep up with. An organisation may have to allow fine-grained tokens and approve the request first. A token belongs to one owner and works only for that owner's repositories, so a user and an organisation need one each. Put each one in place without printing it, from the clipboard:
+
+```sh
+pbpaste | ssh <machine> 'sudo install -m 600 /dev/stdin /etc/credstore/github-mirror.token.<owner>'
+```
+
+The next run picks it up; no restart and no config change. The job logs the expiry date of each GitHub token and of its own GitLab token, and prints `RENEW SOON` for the GitLab one 30 days before. Renew the GitLab token with `mirror/setup-gitlab.sh --renew <owners>` and the same `install` as above.
+
+### What is not in the copy
+
+Wikis; Actions workflows' secrets and variables; rulesets, environments and organisation settings; Pages sites; Git LFS objects (the copy holds the pointer files; the mirror projects have LFS switched off, because GitLab refuses a push whose LFS objects it does not hold); binary release assets and issue attachments (the JSON names them); pull request refs (`refs/pull/*` are fetched into the bare mirror on disk but not pushed to GitLab). Issues and pull requests are a read-only record in JSON, not importable projects.
+
+### Use the copy
+
+Clone from `<group>/<owner>/<repo>` like any GitLab project. To read an issue thread, open `<owner>/<repo>/issues.json` and `issue_comments.json` in the metadata project (`jq` works on them). The copy is private and read-only by convention; a push to it is overwritten by the next run.
+
 ## Repository settings
 
 `.github/rulesets/main.json` is the ruleset of the `main` branch, the same shape as in `site-infra`: no deletion, no force push, one approving review from the code owner, a fresh approval after the last push, resolved review threads, and the two checks of `.github/workflows/check.yml` must pass. Apply it once with `gh api -X POST repos/<owner>/gitlab-home/rulesets --input .github/rulesets/main.json`.
@@ -210,6 +263,7 @@ On 2026-11-21 the first backup was pulled back from the NAS and two projects wer
 - **Off-site copy.** The NAS is a second disk in the same building, not a disaster recovery plan.
 - **Encryption at rest.** The machine's disk is not encrypted; the repositories and `gitlab-secrets.json` are readable to anyone with the disk.
 - **Runners.** No CI runner is registered.
+- **GitHub wikis, secrets and settings** are not mirrored (see "What is not in the copy").
 - **A scrape job** for `/-/metrics`.
 
 ## License

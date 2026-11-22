@@ -5,6 +5,10 @@
 #   - new projects and groups private; public visibility not allowed at all
 #   - the Prometheus metrics endpoint on (for the scraper of the host)
 #   - telemetry and Gravatar off
+#   - Web IDE: the single-origin fallback off (it would serve VS Code's static assets from
+#     GitLab's own origin when the extension host domain is unreachable; GitLab's admin
+#     banner calls that a high-severity risk). The Web IDE then needs the browser to reach
+#     the extension host domain, a public CDN of GitLab's; the extension marketplace is off.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -21,10 +25,12 @@ s.update!(
   restricted_visibility_levels: [Gitlab::VisibilityLevel::PUBLIC],
   prometheus_metrics_enabled: true,
   gravatar_enabled: false,
-  usage_ping_enabled: false
+  usage_ping_enabled: false,
+  vscode_extension_marketplace_single_origin_fallback_enabled: false
 )
 %i[signup_enabled default_project_visibility default_group_visibility restricted_visibility_levels
-   prometheus_metrics_enabled gravatar_enabled usage_ping_enabled].each do |k|
+   prometheus_metrics_enabled gravatar_enabled usage_ping_enabled
+   vscode_extension_marketplace_single_origin_fallback_enabled].each do |k|
   puts "#{k} = #{s.reload.public_send(k).inspect}"
 end
 RUBY

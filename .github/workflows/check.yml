@@ -30,7 +30,7 @@ jobs:
 
       - name: shellcheck (preinstalled on the runner image)
         run: |
-          shellcheck -s bash backup/gitlab-backup.sh scripts/*.sh
+          shellcheck -s bash backup/gitlab-backup.sh backup/restore-project.sh scripts/*.sh mirror/*.sh
           shellcheck -s sh scripts/init-secrets.sh
 
       - name: compose file parses with a fresh .env and fresh secrets
@@ -50,10 +50,17 @@ jobs:
             exit 1
           fi
 
+      - name: mirror script compiles and its helper tests pass
+        run: |
+          python3 -m py_compile mirror/github-mirror.py
+          python3 -m unittest mirror/test_github_mirror.py
+
       - name: systemd units verify
         run: |
           sudo install -m 755 backup/gitlab-backup.sh /usr/local/sbin/gitlab-backup
-          systemd-analyze verify backup/gitlab-backup.service backup/gitlab-backup.timer
+          sudo install -m 755 mirror/github-mirror.py /usr/local/sbin/github-mirror
+          systemd-analyze verify backup/gitlab-backup.service backup/gitlab-backup.timer \
+            mirror/github-mirror.service mirror/github-mirror.timer
 
       - name: proxy snippet validates against Caddy
         run: |
