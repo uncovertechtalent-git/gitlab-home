@@ -230,6 +230,8 @@ Two apps, so that the write permission is installed on one repository only while
 
 **Watch it.** Each target logs one line, `ok` or `fail`, with the expiry of the new token, never the token. A failed target keeps its old file, which stops working within the hour; the job exits 1 and the unit shows failed.
 
+**Metrics.** With `GITHUB_APP_MINT_TEXTFILE` set (the unit sets it to the textfile folder of Ubuntu's `prometheus-node-exporter`), each run ends by writing `github_app_mint.prom`: per target `github_app_mint_target_ok` (1 or 0), `github_app_token_file_mtime_seconds` (the file's mtime by `stat`; the file is never opened), and `github_app_mint_last_run_timestamp_seconds`. Labels are the app, the owner and the service that reads the file (the folder two levels above it), never a path. The alerts are in `uncovertechtalent/agent-observability`, `prometheus/rules/github_app.yml`: the unit failed, the timer not active, a target failed, a token file older than 70 minutes. A metrics problem is reported on stderr and never fails the run. The tests run in bash 4+; on a Mac, `docker run --rm -v "$PWD/github-app":/w:ro -w /w python:3.12-alpine sh -c 'apk add -q bash jq openssl coreutils curl && bash test_github_app_mint.sh'`.
+
 **Lost key.** Generate a new private key on the app's settings page and repeat step 3. The old key can be deleted there.
 
 ## Repository settings

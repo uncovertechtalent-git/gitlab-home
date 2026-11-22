@@ -7,6 +7,9 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/local/sbin/github-app-mint
 Environment=GITHUB_APP_MINT_CONF_DIR=/etc/github-app-mint
+# Per-target result and token file age for node_exporter's textfile collector (Debian/Ubuntu folder of
+# the prometheus-node-exporter package). The alerts on these live in agent-observability, rules/github_app.yml.
+Environment=GITHUB_APP_MINT_TEXTFILE=/var/lib/prometheus/node-exporter/github_app_mint.prom
 # Private keys are systemd credentials: files /etc/credstore/github-app.<app>.pem (root, mode 600)
 # appear for this service only, under $CREDENTIALS_DIRECTORY.
 ImportCredential=github-app.*
